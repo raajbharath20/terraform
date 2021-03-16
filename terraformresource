@@ -1,0 +1,149 @@
+provider "aws" {
+  region = "ap-south-1"
+}
+//VPC creation
+resource "aws_vpc" "myvpc" {
+  cidr_block       = "10.0.0.0/16"
+  instance_tenancy = "default"
+
+  tags = {
+    Name = "terraformvpc"
+  }
+}
+//Subnet creation
+resource "aws_subnet" "pubsub" {
+  vpc_id     = "${aws_vpc.myvpc.id}"
+  cidr_block = "10.0.1.0/24"
+
+  tags = {
+    Name = "publicsubnet"
+  }
+}
+resource "aws_subnet" "pvtsub" {
+  vpc_id     = "${aws_vpc.myvpc.id}"
+  cidr_block = "10.0.2.0/24"
+
+  tags = {
+    Name = "privatesubnet"
+  }
+}
+//Internet Gateway creation
+resource "aws_internet_gateway" "IGW" {
+    vpc_id = "${aws_vpc.myvpc.id}"
+
+  tags = {
+    Name = "IGW"
+  }
+}
+//Route table creation
+resource "aws_route_table" "pubrt" {
+    vpc_id = "${aws_vpc.myvpc.id}"
+
+   route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = "${aws_internet_gateway.IGW.id}"
+  }
+   tags = {
+    Name = "publicRT"
+  }  
+}
+//Public routing tableassociation
+resource "aws_route_table_association" "pubrtassociation" {
+  subnet_id      = "${aws_subnet.pubsub.id}"
+  route_table_id = "${aws_route_table.pubrt.id}"
+}
+//Elastic ip creation
+resource "aws_eip" "eip" {
+    vpc = true
+  }
+// NAT Gateway creation for Pvt subnet
+resource "aws_nat_gateway" "natgw" {
+  allocation_id = "${aws_eip.eip.id}"
+  subnet_id     = "${aws_subnet.pubsub.id}"
+}
+
+resource "aws_route_table" "pvtrt" {
+    vpc_id = "${aws_vpc.myvpc.id}"
+
+   route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = "${aws_internet_gateway.natgw.id}"
+  }
+   tags = {
+    Name = "pvtRT"
+  }  
+}
+//Route table association
+resource "aws_route_table_association" "pvtassociation" {
+  subnet_id      = "${aws_subnet.pvtsub.id}"
+  route_table_id = "${aws_route_table.pvtrt.id}"
+}
+//Security group creation
+resource "aws_security_group" "allow_all" {
+  name        = "allow_all"
+  description = "Allow TLS inbound traffic"
+  vpc_id      = "${aws_vpc.myvpc.id}"
+
+  ingress {
+    description = "TLS from VPC"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+    description = "TLS from VPC"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "allow_tls"
+  }
+//Linux instance with php and Apache
+resource "aws_instance" "name" {
+    resource "aws_instance" "mylinuxInstance" {
+  ami                   = "ami-06ce3edf0cff21f07"
+  instance_type         = "t2.micro"
+  subnet_id             ="${aws_subnet.pubsub.id}"
+  key_name              = git-key
+  vpc_security_group_ids= ["${aws_security_group.allow_all.id}"]
+  associate_public_ip_address =true
+  user_data     = <<-EOF
+                  #!/bin/bash
+                  sudo su
+                  yum -y install httpd
+                  echo "<p> mylinuxInstance! </p>" >> /var/www/html/index.html
+                  sudo systemctl enable httpd
+                  sudo systemctl start httpd
+                  sudo systemctl restart apache2
+                  EOF
+}
+  }
+//RDS Instance aMySQL
+resource "aws_db_instance" "RDSinstance" {
+    allocated_storage   = 10
+  engine                = "mysql"
+  engine_version        = "5.7"
+  instance_class        = "db.t2.micro"
+  name                  = "mydb"
+  username              = "raaj"
+  password              = "innive"
+  parameter_group_name  = "default.mysql5.7"
+  skip_final_snapshot   = true
+  ami                   = "ami-06ce3edf0cff21f07"
+  instance_type         = "t2.micro"
+  subnet_id             ="${aws_subnet.privsub.id}"
+  key_name              = git-key
+  vpc_security_group_ids= ["${aws_security_group.allow_all.id}"]
+    }
+
